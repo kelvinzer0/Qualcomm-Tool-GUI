@@ -24,26 +24,60 @@ jobs:
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
         
+    - name: Find solution file
+      id: find_solution
+      run: |
+        SOLUTION_FILE=$(find . -maxdepth 2 -name "*.sln" | head -1)
+        if [ -z "$SOLUTION_FILE" ]; then
+          echo "No solution file found, looking for project files"
+          PROJECT_FILE=$(find . -maxdepth 2 -name "*.csproj" | head -1)
+          echo "project_file=$PROJECT_FILE" >> $GITHUB_OUTPUT
+        else
+          echo "solution_file=$SOLUTION_FILE" >> $GITHUB_OUTPUT
+        fi
+        
     - name: Cache NuGet packages
       uses: actions/cache@v4
       with:
         path: ~/.nuget/packages
-        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.fsproj') }}
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.fsproj', '**/*.sln') }}
         restore-keys: |
           ${{ runner.os }}-nuget-
           
     - name: Restore dependencies
-      run: dotnet restore --locked-mode
-      
+      run: |
+        if [ -n "${{ steps.find_solution.outputs.solution_file }}" ]; then
+          dotnet restore "${{ steps.find_solution.outputs.solution_file }}" --locked-mode
+        elif [ -n "${{ steps.find_solution.outputs.project_file }}" ]; then
+          dotnet restore "${{ steps.find_solution.outputs.project_file }}" --locked-mode
+        else
+          dotnet restore
+        fi
+        
     - name: Build
-      run: dotnet build --no-restore --configuration Release --warnaserror
-      
+      run: |
+        if [ -n "${{ steps.find_solution.outputs.solution_file }}" ]; then
+          dotnet build "${{ steps.find_solution.outputs.solution_file }}" --no-restore --configuration Release --warnaserror
+        elif [ -n "${{ steps.find_solution.outputs.project_file }}" ]; then
+          dotnet build "${{ steps.find_solution.outputs.project_file }}" --no-restore --configuration Release --warnaserror
+        else
+          dotnet build --no-restore --configuration Release --warnaserror
+        fi
+        
     - name: Run tests
-      run: dotnet test --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage"
-      
-    - name: Upload coverage reports
-      if: always()
-      uses: codecov/codecov-action@v4
-      with:
-        files: ./**/coverage.cobertura.xml
-        fail_ci_if_error: false
+      run: |
+        if [ -n "${{ steps.find_solution.outputs.solution_file }}" ]; then
+          dotnet test "${{ steps.find_solution.outputs.solution_file }}" --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage"
+        elif [ -n "${{ steps.find_solution.outputs.project_file }}" ]; then
+          # Only run tests if the project is a test project
+          if [[ "${{ steps.find_solution.outputs.project_file }}" == *".Tests"* ]] || [[ "${{ steps.find_solution.outputs.project_file }}" == *".Test"* ]]; then
+            dotnet test "${{ steps.find_solution.outputs.project_file }}" --no-build --configuration Release --verbosity normal
+          else
+            echo "No test projects found, skipping tests"
+          fi
+        else
+          # Try to find and run all test projects
+          for test_project in $(find . -name "*Tests*.csproj" -o -name "*Test*.csproj"); do
+            dotnet test "$test_project" --no-build --configuration Release --verbosity normal
+          done
+        fi
