@@ -1,12 +1,13 @@
-name: .NET Framework 4.8 CI with Release
+name: .NET Framework 4.8 CI with EXE and Tools
 
 on:
   push:
     branches: [ "master" ]
     tags:
-      - 'v*'  # Akan trigger release jika push tag seperti v1.0.0
+      - 'v*'
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -17,7 +18,6 @@ jobs:
     
     - name: Setup .NET Framework
       run: |
-        # .NET Framework 4.8 is pre-installed on windows-latest
         echo "Using .NET Framework 4.8"
         
     - name: Setup MSBuild
@@ -29,62 +29,106 @@ jobs:
     - name: Restore packages
       run: nuget restore "./VB.Net/Qualcomm Tools GUI VB.Net.sln"
       
-    - name: Build
+    - name: Build project
       run: msbuild "./VB.Net/Qualcomm Tools GUI VB.Net.sln" /p:Configuration=Release /p:TargetFrameworkVersion=v4.8
       
-    - name: Upload EXE artifact
+    - name: Create output directory structure
+      run: |
+        # Buat folder Data\Process di dalam output
+        mkdir -p "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\Process"
+        mkdir -p "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\Autoloader"
+        
+    - name: Copy emmcdl.exe and dependencies
+      run: |
+        # Cari dan copy emmcdl.exe dari source ke output
+        # Asumsikan file ada di root project atau folder tools
+        if (Test-Path "emmcdl.exe") {
+          Copy-Item "emmcdl.exe" "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\Process\" -Force
+          Write-Host "✅ emmcdl.exe copied from root"
+        }
+        elseif (Test-Path "tools\emmcdl.exe") {
+          Copy-Item "tools\emmcdl.exe" "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\Process\" -Force
+          Write-Host "✅ emmcdl.exe copied from tools folder"
+        }
+        elseif (Test-Path "VB.Net\emmcdl.exe") {
+          Copy-Item "VB.Net\emmcdl.exe" "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\Process\" -Force
+          Write-Host "✅ emmcdl.exe copied from VB.Net folder"
+        }
+        else {
+          Write-Host "⚠️ WARNING: emmcdl.exe not found!"
+        }
+        
+        # Copy fh_loader.exe
+        if (Test-Path "fh_loader.exe") {
+          Copy-Item "fh_loader.exe" "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\Process\" -Force
+          Write-Host "✅ fh_loader.exe copied from root"
+        }
+        elseif (Test-Path "tools\fh_loader.exe") {
+          Copy-Item "tools\fh_loader.exe" "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\Process\" -Force
+          Write-Host "✅ fh_loader.exe copied from tools folder"
+        }
+        else {
+          Write-Host "⚠️ WARNING: fh_loader.exe not found!"
+        }
+        
+        # Copy Reboot.xml jika ada
+        if (Test-Path "Reboot.xml") {
+          Copy-Item "Reboot.xml" "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\Process\" -Force
+          Write-Host "✅ Reboot.xml copied"
+        }
+        
+    - name: List build output
+      run: |
+        Write-Host "=== Build Output Structure ==="
+        dir "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\" -Recurse
+        
+    - name: Upload complete application
       uses: actions/upload-artifact@v4
       with:
-        name: Qualcomm-Tool-GUI
+        name: Qualcomm-Tool-GUI-Complete
         path: |
           VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\*.exe
           VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\*.dll
           VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\*.config
-        if-no-files-found: error
+          VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\Data\**\*
+        if-no-files-found: warn
         
-  create-release:
+  release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')  # Hanya jalan jika ada tag
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-      
+    
     steps:
-    - name: Download EXE artifact
+    - name: Download artifact
       uses: actions/download-artifact@v4
       with:
-        name: Qualcomm-Tool-GUI
-        path: release-files
+        name: Qualcomm-Tool-GUI-Complete
+        path: Qualcomm-Tool-GUI
         
-    - name: Create ZIP file
+    - name: Create ZIP for release
       run: |
-        cd release-files
-        zip -r ../Qualcomm-Tool-GUI-${{ github.ref_name }}.zip .
-        cd ..
+        zip -r Qualcomm-Tool-GUI-${{ github.ref_name }}.zip Qualcomm-Tool-GUI/
         
-    - name: Create GitHub Release
+    - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          Qualcomm-Tool-GUI-${{ github.ref_name }}.zip
-        name: Release ${{ github.ref_name }}
+        files: Qualcomm-Tool-GUI-${{ github.ref_name }}.zip
+        name: Qualcomm Tool GUI ${{ github.ref_name }}
         body: |
-          ## Qualcomm Tool GUI - Release ${{ github.ref_name }}
+          ## Qualcomm Tool GUI - Complete Package
           
-          ### 📦 File yang termasuk:
-          - Executable file (.exe)
-          - Required DLLs
-          - Configuration files
+          ### 📦 Included Files:
+          - Main executable (.exe)
+          - emmcdl.exe (Qualcomm tool)
+          - fh_loader.exe (Firehose loader)
+          - Required DLLs and configs
+          - Data folder with necessary files
           
-          ### 🔧 Cara Penggunaan:
-          1. Download file ZIP
-          2. Extract ke folder tujuan
-          3. Jalankan `Qualcomm Tools GUI VB.Net.exe`
+          ### 🚀 How to Use:
+          1. Extract the ZIP file
+          2. Run `Qualcomm Tools GUI VB.Net.exe`
+          3. Application will use included emmcdl.exe automatically
           
-          ### ⚙️ System Requirements:
-          - Windows OS
-          - .NET Framework 4.8 or later
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ### 📁 Folder Structure After Extract:
