@@ -1,31 +1,94 @@
-name: .NET Framework 4.8 CI
+name: Build and Release VB.NET EXE
 
 on:
   push:
     branches: [ "master" ]
+    tags:
+      - 'v*'  # Trigger release ketika push tag seperti v1.0.0, v2.1.0
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:  # Bisa di-run manual dari GitHub UI
 
 jobs:
   build:
     runs-on: windows-latest
     
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup .NET Framework
-      run: |
-        # .NET Framework 4.8 is pre-installed on windows-latest
-        echo "Using .NET Framework 4.8"
-        
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
       
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v2
       
-    - name: Restore packages
+    - name: Restore NuGet packages
       run: nuget restore "./VB.Net/Qualcomm Tools GUI VB.Net.sln"
       
-    - name: Build
-      run: msbuild "./VB.Net/Qualcomm Tools GUI VB.Net.sln" /p:Configuration=Release /p:TargetFrameworkVersion=v4.8
+    - name: Build project
+      run: msbuild "./VB.Net/Qualcomm Tools GUI VB.Net.sln" /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=bin\Release
+      
+    - name: List build output
+      run: |
+        echo "Build output files:"
+        dir "VB.Net\Qualcomm Tools GUI VB.Net\bin\Release"
+        
+    - name: Upload EXE as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Qualcomm-Tool-GUI
+        path: |
+          VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\*.exe
+          VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\*.dll
+          VB.Net\Qualcomm Tools GUI VB.Net\bin\Release\*.config
+        if-no-files-found: error
+        
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')  # Hanya jalan jika ada tag
+    permissions:
+      contents: write  # Ijin untuk membuat release
+    
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: Qualcomm-Tool-GUI
+        path: release-files
+        
+    - name: List downloaded files
+      run: |
+        ls -la release-files/
+        
+    - name: Create ZIP file
+      run: |
+        cd release-files
+        zip -r ../Qualcomm-Tool-GUI-${{ github.ref_name }}.zip .
+        cd ..
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          Qualcomm-Tool-GUI-${{ github.ref_name }}.zip
+        body: |
+          ## Release ${{ github.ref_name }}
+          
+          ### Changelog
+          - Build dari commit: ${{ github.sha }}
+          - Tanggal: $(date)
+          
+          ### Cara Install
+          1. Download file ZIP
+          2. Extract ke folder tujuan
+          3. Jalankan `Qualcomm Tools GUI VB.Net.exe`
+          
+          ### Catatan
+          - Memerlukan .NET Framework 4.0 atau lebih baru
+          - Tested on Windows 10/11
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
